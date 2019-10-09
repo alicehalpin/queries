@@ -1,0 +1,7 @@
+SELECT DATE_TRUNC('mon',current_end_ts)::date as activity_month, COUNT(DISTINCT city + state + reservation_country) as num_city
+FROM analytics.reservation_summary
+WHERE trip_end_ts IS NOT NULL
+ AND current_status NOT IN (2,11)
+ AND DATE_TRUNC('year',current_end_ts) >= '2017-01-01'
+GROUP BY 1
+ORDER BY 1;
