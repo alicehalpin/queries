@@ -1,0 +1,66 @@
+with base_incidentals as (
+    SELECT
+      DATE_TRUNC('month', rs.current_end_ts) as current_end_ts,
+      rs.reservation_id,
+      i.id,
+      i.status,
+      ilm.life_cycle_category
+      --- Post Trip
+      ,
+      SUM(CASE WHEN
+        il.item ILIKE '%Excess%Mile%'
+        OR il.item ILIKE '%Excess%Distance%'
+        THEN il.quantity * il.item_price * ctu.exchange_rate_avg
+          ELSE 0
+          END) AS excess_distance_usd,
+      SUM(CASE WHEN
+        il.item ILIKE '%Tickets%Tolls%'
+        THEN il.quantity * il.item_price * ctu.exchange_rate_avg
+          ELSE 0
+          END) AS tickets_tolls_usd,
+      SUM(CASE WHEN
+        il.item ILIKE '%Late%Fee%'
+        THEN il.quantity * il.item_price * ctu.exchange_rate_avg
+          ELSE 0
+          END) AS late_fee_usd,
+      SUM(CASE WHEN
+        il.item ILIKE '%Gas%'
+        THEN il.quantity * il.item_price * ctu.exchange_rate_avg
+          ELSE 0
+          END) AS gas_usd,
+      SUM(CASE WHEN
+        ilm.life_cycle_category = 'post_trip'
+        AND il.item NOT ILIKE '%Excess%Mile%'
+        AND il.item NOT ILIKE '%Excess%Distance%'
+        AND il.item NOT ILIKE '%Tickets%Tolls%'
+        AND il.item NOT ILIKE '%Late%Fee%'
+        AND il.item NOT ILIKE '%Gas%'
+        AND il.item NOT ILIKE '%Extra%'
+        THEN il.quantity * il.item_price * ctu.exchange_rate_avg
+          ELSE 0
+          END) AS other_incidental_usd,
+      SUM(CASE WHEN
+        ilm.life_cycle_category = 'post_trip'
+        THEN il.quantity * il.item_price * ctu.exchange_rate_avg
+          ELSE 0
+          END) AS other_incidental_usd1
+    FROM mysql_relayrides.invoice i
+      JOIN mysql_relayrides.invoice_line il
+        ON il.invoice_id = i.id
+      JOIN analytics.reservation_summary rs
+        ON rs.reservation_id = i.reservation_id
+      LEFT JOIN finance.exchange_rate_monthly_avg ctu
+        ON il.item_price_currency = ctu.currency_source AND substring(rs.created, 0, 8) = substring(ctu.date, 0, 8)
+      LEFT JOIN finance.item_line_mapping ilm
+        ON ilm.item_type_id = il.item_type_id
+    WHERE 1 = 1
+          -- Exclude Security Deposits and Damage Invoices
+          AND il.item NOT IN ('Security Deposit', 'VHVV Security Deposit')
+          AND il.item NOT ILIKE '%Damage%'
+          AND (il.item_description IS NULL OR il.item_description NOT ILIKE '%Security Deposit for VHVV%')
+          AND ilm.life_cycle_category = 'post_trip'
+          -- Include only paid, unpaid, or failed invoices
+          AND UPPER(i.status) IN ('PAID', 'UNPAID', 'FAILED')
+    GROUP BY 1, 2, 3, 4, 5
+)
+select * from base_incidentals b where DATE_TRUNC('day',b.current_end_ts) between '2017-05-01' and '2019-09-30';
