@@ -1,0 +1,115 @@
+SELECT
+  rs.reservation_id
+, SUM(CASE WHEN
+               il.item IN ('Promotional Credit')
+       THEN il.quantity * il.item_price * ctu.exchange_rate_avg
+       ELSE 0
+       END) as invoice_promotional_credit_usd
+, SUM(CASE WHEN
+                    il.item NOT IN ('Promotional Credit')
+       THEN il.quantity * il.item_price * ctu.exchange_rate_avg
+       ELSE 0
+       END) as gross_revenue_usd
+  --- Trip Revenues
+    , SUM(CASE WHEN
+                    ilm.revenue_category = 'rental_revenue'
+       THEN il.quantity * il.item_price * ctu.exchange_rate_avg
+       ELSE 0
+       END) as trip_revenue_usd
+    , SUM(CASE WHEN
+                    il.item IN ('Rental Fee')
+       THEN il.quantity * il.item_price * ctu.exchange_rate_avg
+       ELSE 0
+       END) as trip_fee_usd
+    , SUM(CASE WHEN
+                    il.item IN ('Protection Fee')
+       THEN il.quantity * il.item_price * ctu.exchange_rate_avg
+       ELSE 0
+       END) as protection_fee_usd
+    , SUM(CASE WHEN
+                    il.item IN ('Young Driver Fee','Young driver fee')
+       THEN il.quantity * il.item_price * ctu.exchange_rate_avg
+       ELSE 0
+       END) as young_driver_fee_usd
+    , SUM(CASE WHEN
+                    il.item ILIKE '%Delivery%'
+       THEN il.quantity * il.item_price * ctu.exchange_rate_avg
+       ELSE 0
+       END) as delivery_fee_usd
+    , SUM(CASE WHEN
+                    il.item ILIKE '%Extra%'
+       THEN il.quantity * il.item_price * ctu.exchange_rate_avg
+       ELSE 0
+       END) as extra_usd
+    --- Post Trip
+    , SUM(CASE WHEN
+                     il.item ILIKE '%Excess%Mile%'
+        OR il.item ILIKE '%Excess%Distance%'
+       THEN il.quantity * il.item_price * ctu.exchange_rate_avg
+       ELSE 0
+       END) as excess_distance_usd
+    , SUM(CASE WHEN
+                      il.item ILIKE '%Tickets%Tolls%'
+       THEN il.quantity * il.item_price * ctu.exchange_rate_avg
+       ELSE 0
+       END) as tickets_tolls_usd
+    , SUM(CASE WHEN
+                     il.item ILIKE '%Late%Fee%'
+       THEN il.quantity * il.item_price * ctu.exchange_rate_avg
+       ELSE 0
+       END) as late_fee_usd
+    , SUM(CASE WHEN
+                     il.item ILIKE '%Gas%'
+       THEN il.quantity * il.item_price * ctu.exchange_rate_avg
+       ELSE 0
+       END) as gas_usd
+    , SUM(CASE WHEN
+                     ilm.life_cycle_category = 'post_trip'
+          AND il.item NOT ILIKE '%Excess%Mile%'
+          AND il.item NOT ILIKE '%Excess%Distance%'
+                    AND il.item NOT ILIKE '%Tickets%Tolls%'
+                    AND il.item NOT ILIKE '%Late%Fee%'
+                    AND il.item NOT ILIKE '%Gas%'
+                    AND il.item NOT ILIKE '%Extra%'
+       THEN il.quantity * il.item_price * ctu.exchange_rate_avg
+       ELSE 0
+       END) as other_incidental_usd
+  -- Cancellation Fees
+  , SUM(CASE WHEN
+          il.item ILIKE '%Cancellation%'
+       THEN il.quantity * il.item_price * ctu.exchange_rate_avg
+       ELSE 0
+       END) as cancellation_fee_usd
+  -- Host Revenues
+, SUM(CASE WHEN
+                    il.item NOT IN ('Promotional Credit')
+                AND owner_share > 0 AND owner_share < 1
+       THEN il.quantity * il.item_price * ctu.exchange_rate_avg
+       ELSE 0
+       END) as host_revenue_usd
+-- Host Reimbursement
+, SUM(CASE WHEN
+                    il.item NOT IN ('Promotional Credit')
+                AND owner_share = 1
+       THEN il.quantity * il.item_price * ctu.exchange_rate_avg
+       ELSE 0
+       END) as host_reimbursement_usd
+--INTO #temp_revenue_query
+FROM mysql_relayrides.invoice i
+JOIN mysql_relayrides.invoice_line il
+      ON il.invoice_id = i.id
+JOIN analytics.reservation_summary rs
+    ON rs.reservation_id = i.reservation_id
+LEFT JOIN finance.exchange_rate_monthly_avg ctu
+  ON il.item_price_currency = ctu.currency_source and substring(rs.created, 0, 8) = substring(ctu.date,0,8)
+LEFT JOIN finance.item_line_mapping ilm
+  ON ilm.item_type_id = il.item_type_id
+WHERE 1=1
+    -- Exclude Security Deposits and Damage Invoices
+    AND il.item NOT IN ('Security Deposit', 'VHVV Security Deposit')
+    AND il.item NOT ILIKE '%Damage%'
+    AND (il.item_description IS NULL OR il.item_description NOT ILIKE '%Security Deposit for VHVV%')
+    -- Include only paid, unpaid, or failed invoices
+    AND UPPER(i.status) IN ('PAID','UNPAID','FAILED')
+GROUP BY 1
+;
