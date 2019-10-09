@@ -1,0 +1,92 @@
+select top 10*
+from finance.metric_summary_risk ;
+
+select date_trunc('mon' , date) DATE
+, country
+, metric
+, sum(cy_amount) as actuals
+, SUM(budget) as budget
+from finance.metric_summary_risk_consol
+where date between '2017-01-01' and '2019-01-31'
+group by 1,2,3
+order by 1,2,3;
+
+select *
+from finance.metric_summary_risk ;
+
+------------------------------------------------------------
+
+
+SELECT DATE_TRUNC('mon',date) as activity_month
+, metric
+, first_or_returning_guest
+, SUM(cy_amount) as cy_amount
+, SUM(py_amount) as py_amount
+, SUM(budget) as budget
+FROM finance.metric_summary_risk_consol
+GROUP BY 1,2,3
+
+UNION ALL
+SELECT DATE_TRUNC('mon',date) as activity_month
+, metric
+, first_or_returning_guest
+, SUM(cy_amount) as cy_amount
+, SUM(py_amount) as py_amount
+, SUM(budget) as budget
+FROM finance.metric_summary_reservations_consol
+WHERE metric IN ('Rental Days (#)','Gross Revenue (USD $)')
+GROUP BY 1,2,3
+ORDER BY 1,2,3 ;
+
+
+
+
+select top 10*
+from finance.metric_summary_risk_consol
+
+
+
+------------------------ new query with country ----------
+
+SELECT DATE_TRUNC('mon',date) as activity_month
+, metric_name
+, country
+, first_or_returning_guest
+, SUM(cy_amount) as cy_amount
+, SUM(py_amount) as py_amount
+, SUM(budget) as budget
+FROM finance.metric_summary_risk_consol_2019
+GROUP BY 1,2,3,4
+
+UNION ALL
+
+
+SELECT DATE_TRUNC('mon',date) as activity_month
+, metric_name
+, country
+, first_or_returning_guest
+, SUM(cy_amount) as cy_amount
+, SUM(py_amount) as py_amount
+, SUM(budget) as budget
+FROM finance.metric_summary_reservations_consol_2019
+WHERE metric_name IN ('Rental Days (#)','Gross Revenue (USD $)','Net Revenue (USD $)', 'Completed Trips (#)')
+GROUP BY 1,2,3,4
+ORDER BY 1,2,3,4;
+
+
+------------------CHECKOUTS------------------------- 
+
+SELECT DATE_TRUNC('mon',date) as activity_month
+, metric
+, country
+, SUM(cy_amount) as cy_amount
+, SUM(py_amount) as py_amount
+, SUM(budget) as budget
+FROM finance.metric_summary_consol_2019
+WHERE metric IN ('Checkout Sessions (#) by Country')
+GROUP BY 1,2,3
+ORDER BY 1,2,3;
+
+
+select distinct metric_name
+from finance.metric_summary_reservations_consol_2019
