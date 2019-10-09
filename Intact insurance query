@@ -1,0 +1,55 @@
+
+SELECT
+  SUM(CASE WHEN current_status NOT IN (2,11) AND trip_end_ts IS NOT NULL THEN rs.current_trip_length_hr ELSE NULL END)::float/24 rental_days
+, SUM(rs.current_trip_length_hr)::float/24 current_trip_rental_days
+, SUM(rs.booked_trip_length_hr)::float/24 booked_trip_length_rental_days
+FROM analytics.reservation_summary rs
+WHERE 1=1
+AND date_trunc('month', trip_end_ts) = date_trunc('month', dateadd('month', -1, getdate()))
+AND rs.reservation_country ilike 'CA'
+AND rs.is_opi = 0
+;
+
+
+-- with delivery distance:
+select
+    reservation_id,
+    l.state,
+    ds.first_name+ ' '+ ds.last_name driver_name,
+    ds.birthdate driver_dob,
+    datediff(year,ds.birthdate,rs.trip_start_ts) driver_age,
+    case
+        when datediff(year,ds.birthdate,rs.trip_start_ts) <25 then '21-25'
+        else '25+'
+    end age_category,
+    os.first_name+ ' '+ os.last_name owner_name,
+    os.birthdate owner_dob,
+    trip_start_ts::date,
+    trip_end_ts::date,
+    booked_trip_length_hr,
+    booked_trip_length_hr/24 rental_days,
+    CASE WHEN rs.custom_delivery_fee IS NOT NULL OR rs.airport_delivery_fee IS NOT NULL THEN 'yes' ELSE 'no'END AS has_delivery,
+    COALESCE(60 * 1.1515 * DEGREES(ACOS(SIN(RADIANS(l.latitude)) * SIN(RADIANS(car_location.latitude))+COS(RADIANS(l.latitude)) * COS(RADIANS(car_location.latitude)) * COS(RADIANS(l.longitude)-RADIANS(car_location.longitude)))),0) AS delivery_distance,
+    COALESCE((60 * 1.1515 * DEGREES(ACOS(SIN(RADIANS(l.latitude)) * SIN(RADIANS(car_location.latitude))+COS(RADIANS(l.latitude)) * COS(RADIANS(car_location.latitude)) * COS(RADIANS(l.longitude)-RADIANS(car_location.longitude)))))/(25),0) as delivery_time,
+    case
+        when booked_trip_length_hr < 24*7 then 'daily'
+        when booked_trip_length_hr < 24*30 then 'weekly'
+        else 'monthly'
+    end trip_length_category,
+    vs.vehicle_id as vehicle_id,
+    vs.tmv_amt as tmv_value
+from analytics.reservation_summary rs
+join analytics.driver_summary ds
+on rs.driver_id = ds.driver_id
+join analytics.driver_summary os
+on rs.owner_id = os.driver_id
+join mysql_relayrides.location l
+on l.id=rs.location_id
+JOIN analytics.vehicle_summary vs
+ON vs.vehicle_id = rs.vehicle_id
+LEFT JOIN mysql_relayrides.location AS car_location
+ON vs.current_street_location_id = car_location.id
+where reservation_country= 'CA' and booked_trip_length_hr is not null and date_trunc('month', trip_end_ts) = date_trunc('month', dateadd('month', -1, getdate()))
+and rs.is_opi is false
+;
+
