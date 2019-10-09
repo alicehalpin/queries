@@ -1,0 +1,88 @@
+
+
+SELECT
+    distinct rs.reservation_id
+    , CONVERT_TIMEZONE('GMT', 'US/Pacific',rs.trip_start_ts) trip_start
+    , CONVERT_TIMEZONE('GMT', 'US/Pacific',rs.trip_end_ts) trip_end
+    , to_char(CONVERT_TIMEZONE('GMT', 'US/Pacific',rs.trip_end_ts), 'YYYY-MM-01') trip_end_month
+    , rs.current_trip_length_hr rental_duration_in_hours
+    , rs.current_trip_length_hr * 60 rental_duration_in_minutes
+    , rs.current_trip_length_hr :: float / 24 rental_duration_in_days
+    , case
+        when rs.state in ('FL','GA', 'LA','MD','MI','NJ','RI','TX') then 'Tiers 1'
+        when rs.state in ('AK','AL','CA','CO','CT','DC','DE','KY','MA','MS','NM','NV','OK','PA','SC') then 'Tiers 2'
+        when rs.state in ('AR','AZ','IL','KS','MN','MO','MT','NC','NE','OR','TN','UT','VA','WA','WV') then 'Tiers 3'
+        when rs.state in ('HI','IA','ID','IN','ME','ND','NH','OH','PR','SD','VT','WI','WY') then 'Tiers 4'
+      end protection_tier
+    , rs.driver_id
+    , ds.first_name + ' ' + ds.last_name driver_name
+    , rs.city vehicle_city
+    , rs.state vehicle_state
+    , rs.zip_code vehicle_zip
+    , rs.vehicle_id
+    , rpl.protection_level driver_protection_level
+    , vs.year
+    , vs.make
+    , vs.model
+    , vs.vehicle_type
+    , nvl(v.license_plate_number, vin) license_plate_or_vin
+    , ds.license_country renter_license_country
+    , case
+        when rs.custom_delivery_fee is null and rs.airport_delivery_fee is null then 'no'
+        else 'yes'
+    end has_delivery
+    , rs.owner_id
+    , os.first_name + ' ' + os.last_name owner_name
+    , nvl(os.license_country,'N/A') owner_license_country
+    , nvl(60 * 1.1515 * DEGREES(ACOS(SIN(RADIANS(l.latitude)) * SIN(RADIANS(car_location.latitude))+COS(RADIANS(l.latitude)) * COS(RADIANS(car_location.latitude)) * COS(RADIANS(l.longitude)-RADIANS(car_location.longitude)))),0)/(25*24) delivery_time
+--         count(rs.reservation_id)
+--         , count(DISTINCT rs.reservation_id)
+FROM analytics.reservation_summary rs
+LEFT JOIN analytics.driver_summary ds
+    on rs.driver_id = ds.driver_id
+LEFT JOIN analytics.driver_summary os
+    on rs.owner_id = os.driver_id
+LEFT JOIN analytics.vehicle_summary vs
+    on rs.vehicle_id = vs.vehicle_id
+LEFT JOIN (
+    select
+        reservation_id
+        , protection_level
+    from(
+        SELECT
+            reservation_id
+            , last_value(protection_level)
+            OVER (PARTITION BY reservation_id
+                ORDER BY created
+                ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) protection_level
+            FROM mysql_relayrides.reservation_protection_level
+        ) as tb1
+        group by 1,2
+    )rpl
+    on rpl.reservation_id = rs.reservation_id
+LEFT JOIN mysql_relayrides.vehicle v
+    on vs.vehicle_id = v.id
+LEFT JOIN mysql_relayrides.location l
+    ON l.id=rs.location_id
+LEFT JOIN mysql_relayrides.location car_location
+    ON vs.current_street_location_id = car_location.id
+-- where CONVERT_TIMEZONE('GMT', 'US/Pacific', rs.trip_end_ts)::date between '2016-12-11' and '2016-12-31'
+--       and rs.reservation_country ilike 'US'
+where 1=1
+--and CONVERT_TIMEZONE('GMT', 'US/Pacific', rs.trip_end_ts)::date between DATE_TRUNC('month', DATEADD(month, -1, getdate())) and last_day(DATEADD(month, -1, getdate())) and rs.reservation_country ilike 'US'
+and CONVERT_TIMEZONE('GMT', 'US/Pacific', rs.trip_end_ts)::date between '2019-09-01' and '2019-09-30'
+and rs.reservation_country ilike 'US'
+and rs.is_opi is FALSE;
+--and rs.is_opi is TRUE;
+
+/*
+SELECT
+  SUM(CASE WHEN current_status NOT IN (2,11) AND trip_end_ts IS NOT NULL THEN rs.current_trip_length_hr ELSE NULL END)::float/24 rental_days
+, SUM(rs.current_trip_length_hr)::float/24 rental_days
+FROM analytics.reservation_summary rs
+WHERE 1=1
+AND CONVERT_TIMEZONE('GMT', 'US/Pacific', rs.trip_end_ts)::date  between DATE_TRUNC('month', DATEADD(month, -1, getdate())) and last_day(DATEADD(month, -1, getdate()))
+AND rs.reservation_country ilike 'US'
+AND rs.is_opi = 0
+;
+*/
