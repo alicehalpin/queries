@@ -1,0 +1,500 @@
+-- UPDATE DATES BEFORE RUNNING!!!
+
+SELECT metric
+  , activity_quarter::DATE as activity_quarter
+  , activity_month::DATE as activity_month
+  , cy
+  , py
+  , budget
+FROM (
+
+  (SELECT
+     metric,
+     DATE_TRUNC('quarter', date) :: DATE AS activity_quarter,
+     DATE_TRUNC('mon', date) :: DATE     AS activity_month,
+     SUM(cy_amount)                            AS cy,
+     SUM(py_amount)                            AS py,
+     SUM(budget)                               AS budget
+   FROM finance.metric_summary_consol_2019-- finance.metric_summary_consol_2019
+   WHERE 1 = 1
+         AND metric IN
+             ('Visits (#)', 'Booked Trips NOC (#)','Attempts with Booking NOC (#)', 'Completed Trips (#)', 'Vehicles in Search (#) - EOM', 'Gross Revenue (USD $)', 'Search Sessions (#) - Segment', 'Search Sessions (#) by Country'
+               --, 'NetSuite: Gross Revenue', 'NetSuite: Owner Payments', 'NetSuite: Net Revenue', 'NetSuite: Gross Margin', 'NetSuite: EBIT', 'NetSuite: Payment Processing', 'NetSuite: Physical Damage', 'NetSuite: Customer Support', 'NetSuite: Liability Insurance'
+               , 'Utilized Days (#)', 'Supply Days (#)','Net Revenue (USD $)','Host Payments (USD $)'
+             )
+
+         AND DATE_TRUNC('mon', date) BETWEEN '2014-01-01' AND '2019-09-30'
+   GROUP BY 1, 2, 3
+   ORDER BY 1, 2, 3
+)
+
+
+    UNION ALL
+
+  (
+  SELECT
+    'NetSuite: ' +
+      CASE WHEN gl_account = '653000' THEN 'Bad Debt'
+           WHEN gl_account = '655000' THEN 'Chargebacks'
+           WHEN department_lvl2 IN ('Member Support') THEN 'Customer Support'
+           WHEN department_lvl1 IN ('Airport Operations','Marketing & Community') THEN department_lvl1
+           ELSE department_lvl2 END as metric
+
+    , DATE_TRUNC('quarter',activity_month)::DATE as activity_quarter
+     , DATE_TRUNC('mon', activity_month) :: DATE     AS activity_month
+
+    , SUM(CASE WHEN activity_month <= as_of_month THEN cy_actuals ELSE 0 END) cy
+    , SUM(py_actuals) py
+    , SUM(budget)budget
+    --, DATE_ADD('day',-1,DATE_TRUNC('day',GETDATE())) as as_of_date
+  FROM finance.model_gap_analysis_2018
+  WHERE financial_row NOT IN ('Key Metrics')
+  AND department_lvl2 IN ('Gross Revenue','Owner Payments','Net Revenue','Gross Margin','EBIT','Payment Processing','Physical Damage','Member Support','Liability Insurance')
+  AND activity_month >= '2014-01-01'
+  AND scenario NOT ILIKE '%med%' --exclude medium case scenario
+  GROUP BY 1,2,3
+  ORDER BY 1,2,3
+
+  )
+
+
+  UNION ALL
+
+  (SELECT
+     'Gross Revenue ($) - Instant Book' AS metric,
+     DATE_TRUNC('quarter', date):: DATE        AS activity_quarter,
+     DATE_TRUNC('mon', date)  :: DATE          AS activity_month,
+     SUM(cy_amount)                     AS cy,
+     SUM(py_amount)                  AS py,
+     SUM(budget)              AS budget
+   FROM finance.metric_summary_reservations_consol_2019
+   WHERE metric = 'Gross Revenue (USD $)'
+         AND is_instant_book = 'Instant Book'
+         AND DATE_TRUNC('mon', date) BETWEEN '2019-01-01' AND '2019-09-30'
+   GROUP BY 1, 2, 3
+   ORDER BY 1, 2, 3)
+
+  UNION ALL
+
+  (SELECT
+     'Gross Revenue ($) - Delivery' AS metric,
+     DATE_TRUNC('quarter', date):: DATE    AS activity_quarter,
+     DATE_TRUNC('mon', date)   :: DATE     AS activity_month,
+     SUM(cy_amount)                     AS cy,
+     SUM(py_amount)                  AS py,
+     SUM(budget)              AS budget
+   FROM finance.metric_summary_reservations_consol_2019
+   WHERE metric = 'Gross Revenue (USD $)'
+         AND delivery_type <> 'No Delivery'
+         AND DATE_TRUNC('mon', date) BETWEEN '2014-01-01' AND '2019-09-30'
+   GROUP BY 1, 2, 3
+   ORDER BY 1, 2, 3)
+
+  UNION ALL
+
+  (SELECT
+     'Gross Revenue ($) - Power Owner',
+     DATE_TRUNC('quarter', current_end_ts) AS activity_quarter,
+     DATE_TRUNC('mon', current_end_ts)     AS activity_month,
+     SUM(gross_revenue_usd)      AS cy,
+     0                           AS py,
+     0                           AS budget
+   FROM analytics.reservation_summary rs
+     JOIN analytics.owner_summary_by_day osbd
+       ON osbd.owner_id = rs.owner_id
+          AND DATE_TRUNC('day', osbd.date) = DATE_TRUNC('day', rs.current_end_ts)
+   WHERE 1 = 1
+         AND DATE_TRUNC('mon', current_end_ts) BETWEEN '2014-01-01' AND '2019-09-30'
+         AND (is_power_owner = 1 OR is_strategic_owner = 1)
+   GROUP BY 1, 2, 3
+   ORDER BY 1, 2, 3)
+UNION ALL
+
+  (
+    SELECT
+     'Active Owners (#) - by Quarter',
+     DATE_TRUNC('quarter', current_end_ts) AS activity_quarter,
+     NULL:: DATE     AS activity_month,
+     COUNT(DISTINCT rs.owner_id)      AS cy,
+     0                           AS py,
+     0                           AS budget
+   FROM analytics.reservation_summary rs
+   WHERE 1 = 1
+         AND DATE_TRUNC('mon', current_end_ts) BETWEEN '2014-01-01' AND '2019-09-30'
+         AND current_status NOT IN (2,11)
+         AND trip_end_ts IS NOT NULL
+   GROUP BY 1, 2, 3
+   ORDER BY 1, 2, 3
+  )
+
+
+  UNION ALL
+
+  (SELECT
+     'Active Owners (#)',
+     NULL:: DATE AS activity_quarter,
+     DATE_TRUNC('mon', current_end_ts)     AS activity_month,
+     COUNT(DISTINCT rs.owner_id)      AS cy,
+     0                           AS py,
+     0                           AS budget
+   FROM analytics.reservation_summary rs
+   WHERE 1 = 1
+         AND DATE_TRUNC('mon', current_end_ts) BETWEEN '2014-01-01' AND '2019-09-30'
+         AND current_status NOT IN (2,11)
+         AND trip_end_ts IS NOT NULL
+   GROUP BY 1, 2, 3
+   ORDER BY 1, 2, 3)
+
+  UNION ALL
+
+  (SELECT
+     'Active Owners (#) - Power Owner',
+     NULL:: DATE AS activity_quarter,
+     DATE_TRUNC('mon', current_end_ts)     AS activity_month,
+     COUNT(DISTINCT rs.owner_id)      AS cy,
+     0                           AS py,
+     0                           AS budget
+   FROM analytics.reservation_summary rs
+     JOIN analytics.owner_summary_by_day osbd
+       ON osbd.owner_id = rs.owner_id
+          AND DATE_TRUNC('day', osbd.date) = DATE_TRUNC('day', rs.current_end_ts)
+   WHERE 1 = 1
+         AND DATE_TRUNC('mon', current_end_ts) BETWEEN '2014-01-01' AND '2019-09-30'
+         AND (is_power_owner = 1 OR is_strategic_owner = 1)
+         AND current_status NOT IN (2,11)
+         AND trip_end_ts IS NOT NULL
+   GROUP BY 1, 2, 3
+   ORDER BY 1, 2, 3)
+
+
+  UNION ALL
+
+  (SELECT
+     'Active Owners (#)',
+     DATE_TRUNC('quarter', current_end_ts) AS activity_quarter,
+     NULL:: DATE    AS activity_month,
+     COUNT(DISTINCT rs.owner_id)      AS cy,
+     0                           AS py,
+     0                           AS budget
+   FROM analytics.reservation_summary rs
+   WHERE 1 = 1
+         AND DATE_TRUNC('mon', current_end_ts) BETWEEN '2014-01-01' AND '2019-09-30'
+         AND current_status NOT IN (2,11)
+         AND trip_end_ts IS NOT NULL
+   GROUP BY 1, 2, 3
+   ORDER BY 1, 2, 3)
+
+  UNION ALL
+
+  (SELECT
+     'Active Owners (#) - Power Owner',
+     DATE_TRUNC('quarter', current_end_ts) AS activity_quarter,
+     NULL :: DATE  AS activity_month,
+     COUNT(DISTINCT rs.owner_id)      AS cy,
+     0                           AS py,
+     0                           AS budget
+   FROM analytics.reservation_summary rs
+     JOIN analytics.owner_summary_by_day osbd
+       ON osbd.owner_id = rs.owner_id
+          AND DATE_TRUNC('day', osbd.date) = DATE_TRUNC('day', rs.current_end_ts)
+   WHERE 1 = 1
+         AND DATE_TRUNC('mon', current_end_ts) BETWEEN '2014-01-01' AND '2019-09-30'
+         AND (is_power_owner = 1 OR is_strategic_owner = 1)
+         AND current_status NOT IN (2,11)
+         AND trip_end_ts IS NOT NULL
+   GROUP BY 1, 2, 3
+   ORDER BY 1, 2, 3)
+
+) A
+
+ORDER BY 1,2,3;
+
+
+
+
+--- STOP HERE.  Remaining queries below are ad-hoc for other charts:
+
+
+
+-- Visits by Month / Platform
+SELECT
+     DATE_TRUNC('mon', date) :: DATE     AS activity_month,
+     SUM(CASE WHEN device ILIKE '%web%' THEN sessions ELSE 0 END) as web,
+     SUM(CASE WHEN device ILIKE '%ios%' THEN sessions ELSE 0 END) as iOS,
+     SUM(CASE WHEN device ILIKE '%android%' THEN sessions ELSE 0 END) as android
+
+   FROM marketing_scratch.traffic_session_by_device
+   WHERE 1 = 1
+         AND DATE_TRUNC('mon', date) BETWEEN '2017-01-01' AND '2019-01-01'
+   GROUP BY 1
+   ORDER BY 1;
+
+
+
+
+
+-- Airport vs. City Breakout
+SELECT DATE_TRUNC('quarter', date)        AS activity_quarter,
+       SUM(CASE WHEN airport_city_ind = 'Airport' AND metric_name = 'Gross Revenue (USD $)' THEN cy_amount ELSE 0 END) as airport_revenue,
+       SUM(CASE WHEN airport_city_ind = 'City' AND metric_name = 'Gross Revenue (USD $)' THEN cy_amount ELSE 0 END) as city_revenue,
+       SUM(CASE WHEN airport_city_ind = 'Airport' AND metric_name = 'Completed Trips (#)' THEN cy_amount ELSE 0 END) as airport_completed_trips,
+       SUM(CASE WHEN airport_city_ind = 'City' AND metric_name = 'Completed Trips (#)' THEN cy_amount ELSE 0 END) as city_completed_trips
+FROM finance.metric_summary_reservations_consol_2019
+   WHERE metric_name IN ('Gross Revenue (USD $)','Completed Trips (#)')
+  AND DATE_TRUNC('quarter', date)  BETWEEN DATEADD('quarter',-8,DATE_TRUNC('quarter',GETDATE())) AND DATEADD('quarter',-1,DATE_TRUNC('quarter',GETDATE()))
+GROUP BY 1
+ORDER BY 1;
+
+
+
+SELECT DATE_TRUNC('month', date)        AS activity_month,
+       SUM(CASE WHEN airport_city_ind = 'Airport' AND metric_name = 'Gross Revenue (USD $)' THEN cy_amount ELSE 0 END) as airport_revenue,
+       SUM(CASE WHEN airport_city_ind = 'City' AND metric_name = 'Gross Revenue (USD $)' THEN cy_amount ELSE 0 END) as city_revenue,
+       SUM(CASE WHEN airport_city_ind = 'Airport' AND metric_name = 'Completed Trips (#)' THEN cy_amount ELSE 0 END) as airport_completed_trips,
+       SUM(CASE WHEN airport_city_ind = 'City' AND metric_name = 'Completed Trips (#)' THEN cy_amount ELSE 0 END) as city_completed_trips
+FROM finance.metric_summary_reservations_consol_2019
+   WHERE metric_name IN ('Gross Revenue (USD $)','Completed Trips (#)')
+  AND DATE_TRUNC('month', date)  BETWEEN '2013-01-01' AND '2019-01-31'
+GROUP BY 1
+ORDER BY 1;
+
+
+
+
+
+SELECT DATE_TRUNC('year', date)        AS activity_year,
+       SUM(CASE WHEN airport_city_ind = 'Airport' AND metric_name = 'Gross Revenue (USD $)' THEN cy_amount ELSE 0 END) as airport_revenue,
+       SUM(CASE WHEN airport_city_ind = 'City' AND metric_name = 'Gross Revenue (USD $)' THEN cy_amount ELSE 0 END) as city_revenue,
+       SUM(CASE WHEN airport_city_ind = 'Airport' AND metric_name = 'Completed Trips (#)' THEN cy_amount ELSE 0 END) as airport_completed_trips,
+       SUM(CASE WHEN airport_city_ind = 'City' AND metric_name = 'Completed Trips (#)' THEN cy_amount ELSE 0 END) as city_completed_trips
+FROM finance.metric_summary_reservations_consol_2019
+   WHERE metric_name IN ('Gross Revenue (USD $)','Completed Trips (#)')
+  AND DATE_TRUNC('year', date)  BETWEEN '2015-01-01' AND '2018-12-31'
+GROUP BY 1
+ORDER BY 1;
+
+
+
+
+
+-- Domestic Local/National/International Breakout
+SELECT DATE_TRUNC('quarter', date)        AS activity_quarter,
+       SUM(CASE WHEN guest_origin = 'Domestic Local' AND metric_name = 'Gross Revenue (USD $)' THEN cy_amount ELSE 0 END) as local_revenue,
+       SUM(CASE WHEN guest_origin = 'Domestic National' AND metric_name = 'Gross Revenue (USD $)' THEN cy_amount ELSE 0 END) as national_revenue,
+       SUM(CASE WHEN guest_origin = 'International' AND metric_name = 'Gross Revenue (USD $)' THEN cy_amount ELSE 0 END) as intl_revenue,
+       SUM(CASE WHEN guest_origin = 'Domestic Local' AND metric_name = 'Completed Trips (#)' THEN cy_amount ELSE 0 END) as local_completed_trips,
+       SUM(CASE WHEN guest_origin = 'Domestic National' AND metric_name = 'Completed Trips (#)' THEN cy_amount ELSE 0 END) as national_completed_trips,
+       SUM(CASE WHEN guest_origin = 'International' AND metric_name = 'Completed Trips (#)' THEN cy_amount ELSE 0 END) as intl_completed_trips
+FROM finance.metric_summary_reservations_consol_2019
+   WHERE metric_name IN ('Gross Revenue (USD $)','Completed Trips (#)')
+  AND DATE_TRUNC('quarter', date)  BETWEEN DATEADD('quarter',-8,DATE_TRUNC('quarter',GETDATE())) AND DATEADD('quarter',-1,DATE_TRUNC('quarter',GETDATE()))
+GROUP BY 1
+ORDER BY 1;
+
+
+SELECT DATE_TRUNC('month', date)        AS activity_month,
+       SUM(CASE WHEN guest_origin = 'Domestic Local' AND metric_name = 'Gross Revenue (USD $)' THEN cy_amount ELSE 0 END) as local_revenue,
+       SUM(CASE WHEN guest_origin = 'Domestic National' AND metric_name = 'Gross Revenue (USD $)' THEN cy_amount ELSE 0 END) as national_revenue,
+       SUM(CASE WHEN guest_origin = 'International' AND metric_name = 'Gross Revenue (USD $)' THEN cy_amount ELSE 0 END) as intl_revenue,
+       SUM(CASE WHEN guest_origin = 'Domestic Local' AND metric_name = 'Completed Trips (#)' THEN cy_amount ELSE 0 END) as local_completed_trips,
+       SUM(CASE WHEN guest_origin = 'Domestic National' AND metric_name = 'Completed Trips (#)' THEN cy_amount ELSE 0 END) as national_completed_trips,
+       SUM(CASE WHEN guest_origin = 'International' AND metric_name = 'Completed Trips (#)' THEN cy_amount ELSE 0 END) as intl_completed_trips
+FROM finance.metric_summary_reservations_consol_2019
+   WHERE metric_name IN ('Gross Revenue (USD $)','Completed Trips (#)')
+  AND DATE_TRUNC('month', date)  BETWEEN '2014-01-01' AND '2019-01-31'
+GROUP BY 1
+ORDER BY 1;
+
+
+
+--- Paid/Free Traffic Breakdown
+SELECT
+
+    DATE_TRUNC('quarter',date) as activity_quarter
+  , CASE
+
+    WHEN medium IN ('(none)','(not set)','organic','referral','native') OR medium like '%email%' OR medium like '%social%' THEN concat(device,': free')
+
+    WHEN medium IN ('cpc','cpv','gdn','cpa','display','cpc:pl','cpc:inline','cpc:compare','cpm','affiliate') THEN concat(device,': paid')
+
+    WHEN device = 'iOS native' THEN 'iOS: native'
+    WHEN device = 'Android native' THEN 'Android: native'
+
+ELSE 'Other' END as device_paid_free
+
+  , SUM(sessions) AS amount
+FROM marketing_scratch.traffic_session_by_device
+GROUP BY 1,2
+ORDER BY 1,2;
+
+
+-- Paid/Free App Install Breakout
+select
+  DATE_TRUNC('quarter',install_date) as install_date
+
+  , (CASE
+	WHEN platform LIKE '%android%' AND media_source = 'organic' THEN 'Android: Organic'
+	WHEN platform LIKE '%android%' AND media_source != 'organic' THEN 'Android: Paid'
+ 	WHEN platform LIKE '%ios%' AND media_source = 'organic' THEN 'iOS: Organic'
+ 	WHEN platform LIKE '%ios%' AND media_source != 'organic' THEN 'iOS: Paid'
+END
+) as device_paid_free
+
+, SUM(num_install) as num_install
+
+from marketing.marketing_appsflyer_partner_import
+GROUP BY 1,2
+ORDER BY 1,2;
+
+
+-- Paid/Free Activations
+
+DROP TABLE IF EXISTS #temp_signup_base;
+SELECT DISTINCT
+    ds.driver_id
+  , DATE_TRUNC('day',created) as signup_date
+  , CASE WHEN dtl.sign_up_ip_country NOT IN ('US','CA','GB','DE') THEN 'Other' ELSE dtl.sign_up_ip_country END as country
+  , CASE WHEN platform IS NULL or platform in ('Undefined','Bot', '') THEN 'Unknown'
+     WHEN platform = 'Web Undefined' then 'Desktop web'
+        ELSE platform END AS device
+  , CASE WHEN goal = 'FREE' THEN 'FREE'
+         WHEN dat.utm_source IN ('facebook','instagram','snapchat','twitter','pinterest','intentmedia','youtube','adcolony','kijiji') THEN 'Display'
+         WHEN dat.utm_source IN ('kayak','bookingbuddy','kayak_ca','autorentals','cheapflights') THEN 'OTA'
+         WHEN dat.utm_source IN ('google','apple','bing','newengen','quora','yelp','google:uk') THEN 'SEM'
+         WHEN dat.utm_source IN ('referral') THEN 'Referral'
+         WHEN dat.utm_source IN ('tv') THEN 'TV'
+         ELSE 'Other' END as channel
+INTO #temp_signup_base
+FROM  analytics.driver_summary ds
+LEFT JOIN analytics.driver_to_location dtl
+      ON ds.driver_id = dtl.driver_id
+LEFT JOIN marketing_scratch.dashboard_consolidated dat
+      ON dat.driver_id = ds.driver_id
+GROUP BY 1,2,3,4,5
+ORDER BY 1,2,3,4,5
+;
+
+
+DROP TABLE IF EXISTS #temp_activations_base;
+  SELECT rs.driver_id
+  , CASE WHEN rs.reservation_country NOT IN ('US','CA','GB','DE') THEN 'Other' ELSE rs.reservation_country END as country
+  , CASE WHEN rs.reservation_country = 'CA' AND rs.state IN ('AB','ON','BC','QC','MB','SK','NL','PE','NB','NS') THEN rs.state ELSE NULL END as ca_province
+  , CASE WHEN sb.channel = 'FREE' THEN 'Free' ELSE 'Paid' END as paid_free_ind
+  , ds.created as signup_date
+  , rs.current_end_ts as activation_date
+  INTO #temp_activations_base
+  FROM analytics.reservation_summary rs
+  JOIN analytics.driver_summary ds
+    ON ds.driver_id = rs.driver_id
+  JOIN (SELECT driver_id, MIN(current_end_ts) as min_current_end_ts
+        FROM analytics.reservation_summary rs
+         WHERE 1=1
+               AND rs.is_ever_booked = 1
+               AND rs.current_status NOT IN (2,11)
+               AND rs.trip_end_ts IS NOT NULL
+        GROUP BY 1) ad
+    ON rs.driver_id = ad.driver_id
+   AND rs.current_end_ts <= ad.min_current_end_ts
+
+   JOIN #temp_signup_base sb
+      ON sb.driver_id = rs.driver_id
+  WHERE 1 = 1
+      AND rs.is_ever_booked = 1
+      AND rs.current_status NOT IN (2,11)
+      AND rs.trip_end_ts IS NOT NULL
+;
+
+
+SELECT DATE_TRUNC('quarter',activation_date) as activation_quarter
+, COUNT(DISTINCT CASE WHEN paid_free_ind = 'Paid' THEN driver_id END) as paid_activations
+, COUNT(DISTINCT CASE WHEN paid_free_ind = 'Free' THEN driver_id END) as free_activations
+FROM #temp_activations_base
+WHERE DATE_TRUNC('quarter',activation_date) BETWEEN DATEADD('quarter',-8,DATE_TRUNC('quarter',GETDATE())) AND DATEADD('quarter',-1,DATE_TRUNC('quarter',GETDATE()))
+GROUP BY 1
+ORDER BY 1
+;
+
+
+-- CAC
+ SELECT DATE_TRUNC('quarter',date) as activity_quarter
+, SUM(CASE WHEN metric = 'Ad-spend ($)' THEN cy_amount ELSE 0 END) as media_spend
+ , SUM(CASE WHEN metric = 'Promo Spend ($)' THEN cy_amount ELSE 0 END) as promo_spend
+  FROM finance.metric_summary_marketing_consol
+WHERE DATE_TRUNC('quarter',date) BETWEEN DATEADD('quarter',-8,DATE_TRUNC('quarter',GETDATE())) AND DATEADD('quarter',-1,DATE_TRUNC('quarter',GETDATE()))
+GROUP BY 1
+ORDER BY 1;
+
+
+SELECT DATE_TRUNC('quarter',activity_month) as activity_quarter
+, activity_month
+,SUM(cy_actuals) as verification
+FROM finance.model_gap_analysis_2018
+WHERE 1=1
+AND department_lvl2 = 'Trust & Safety'
+AND account_name IN ('Renter Set Up','Call Center','')
+GROUP BY 1,2
+ORDER BY 1,2;
+
+
+
+--- search by device
+
+
+SELECT
+     DATE_TRUNC('mon', date) :: DATE     AS activity_month,
+     SUM(CASE WHEN device ILIKE '%web%' THEN sessions ELSE 0 END) as web,
+     SUM(CASE WHEN device ILIKE '%ios%' THEN sessions ELSE 0 END) as iOS,
+     SUM(CASE WHEN device ILIKE '%android%' THEN sessions ELSE 0 END) as android
+
+   FROM marketing_scratch.traffic_session_by_device
+   WHERE 1 = 1
+         AND DATE_TRUNC('mon', date) BETWEEN '2017-01-01' AND '2019-01-01'
+   GROUP BY 1
+   ORDER BY 1;
+
+
+
+------------------
+
+SELECT DATE_TRUNC('month', date)        AS activity_month,
+       SUM(CASE WHEN airport_city_ind = 'Airport' AND metric_name = 'Gross Revenue (USD $)' THEN cy_amount ELSE 0 END) as airport_revenue,
+       SUM(CASE WHEN airport_city_ind = 'City' AND metric_name = 'Gross Revenue (USD $)' THEN cy_amount ELSE 0 END) as city_revenue,
+       SUM(CASE WHEN airport_city_ind = 'Airport' AND metric_name = 'Completed Trips (#)' THEN cy_amount ELSE 0 END) as airport_completed_trips,
+       SUM(CASE WHEN airport_city_ind = 'City' AND metric_name = 'Completed Trips (#)' THEN cy_amount ELSE 0 END) as city_completed_trips
+FROM finance.metric_summary_reservations_consol_2019
+   WHERE metric_name IN ('Gross Revenue (USD $)','Completed Trips (#)')
+  and date between '2016-10-01'and '2019-09-30'
+GROUP BY 1
+ORDER BY 1;
+
+
+-- Domestic Local/National/International Breakout
+SELECT DATE_TRUNC('month', date)        AS activity_month,
+       SUM(CASE WHEN guest_origin = 'Domestic Local' AND metric_name = 'Gross Revenue (USD $)' THEN cy_amount ELSE 0 END) as local_revenue,
+       SUM(CASE WHEN guest_origin = 'Domestic National' AND metric_name = 'Gross Revenue (USD $)' THEN cy_amount ELSE 0 END) as national_revenue,
+       SUM(CASE WHEN guest_origin = 'International' AND metric_name = 'Gross Revenue (USD $)' THEN cy_amount ELSE 0 END) as intl_revenue,
+       SUM(CASE WHEN guest_origin = 'Domestic Local' AND metric_name = 'Completed Trips (#)' THEN cy_amount ELSE 0 END) as local_completed_trips,
+       SUM(CASE WHEN guest_origin = 'Domestic National' AND metric_name = 'Completed Trips (#)' THEN cy_amount ELSE 0 END) as national_completed_trips,
+       SUM(CASE WHEN guest_origin = 'International' AND metric_name = 'Completed Trips (#)' THEN cy_amount ELSE 0 END) as intl_completed_trips
+FROM finance.metric_summary_reservations_consol_2019
+   WHERE metric_name IN ('Gross Revenue (USD $)','Completed Trips (#)')
+  AND date between '2016-10-01'and '2019-09-30'
+GROUP BY 1
+ORDER BY 1;
+
+-----------vehicles in search EOM-------------
+SELECT
+     metric,
+     DATE_TRUNC('quarter', date) :: DATE AS activity_quarter,
+     DATE_TRUNC('mon', date) :: DATE     AS activity_month,
+     SUM(cy_amount)                            AS cy,
+     SUM(py_amount)                            AS py,
+     SUM(budget)                               AS budget
+   FROM finance.metric_summary_consol-- finance.metric_summary_consol_2019
+   WHERE 1 = 1
+         AND metric IN
+             ('Vehicles in Search (#) - EOM')
+
+         AND DATE_TRUNC('mon', date) BETWEEN '2014-01-01' AND '2019-01-31'
+   GROUP BY 1, 2, 3
+   ORDER BY 1, 2, 3
